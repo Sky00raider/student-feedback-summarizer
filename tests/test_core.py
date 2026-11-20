@@ -160,3 +160,80 @@ def test_adapter_with_wrong_shapes_is_refused(tmp_path):
     saved["config"]["r"] = 2
     with pytest.raises(ValueError):
         core.apply_adapter(tiny_gpt2(), saved)
+
+
+# ---------------------------------------------------------------- Milestone 3: summarization pipeline (UI backend)
+def test_read_feedback_finds_the_comment_column_in_csv():
+    data = "student,rating,comment\nA,4,Great lectures\nB,2,\"Too fast, honestly\"\n".encode()
+    assert core.read_feedback("f.csv", data) == ["Great lectures", "Too fast, honestly"]
+    no_header = b"1,the pace was too fast for me\n2,slides were great\n"
+    assert core.read_feedback("f.csv", no_header) == ["the pace was too fast for me", "slides were great"]
+
+
+def test_read_feedback_txt_lines_paragraphs_and_json():
+    assert core.read_feedback("f.txt", "one\n\ntwo\n") == ["one", "two"]
+    assert core.read_feedback("f.txt", "first line\nsecond\n\nthird\n") == ["first line second", "third"]
+    assert core.read_feedback("f.txt", "a\nb\n") == ["a", "b"]
+    assert core.read_feedback("f.jsonl", '{"feedback": "x"}\n{"comment": "y"}\n') == ["x", "y"]
+    assert core.read_feedback("f.json", '["p", "q"]') == ["p", "q"]
+
+
+def test_redact_removes_personal_details():
+    text, n = core.redact("My name is Priya Raman, email priya.r@uni.edu, ID S1234567, call +91 98765 43210.")
+    assert "Priya" not in text and "@" not in text and "1234567" not in text and "98765" not in text
+    assert n == 4
+    assert core.redact("The pace in week 3 was fast.") == ("The pace in week 3 was fast.", 0)
+
+
+def test_parse_output_accepts_the_format_and_flags_garbage():
+    r = core.parse_output(" pacing | negative | Found week 3 too fast.", EX.comment)
+    assert (r.topic, r.sentiment, r.summary, r.valid) == ("pacing", "negative", "Found week 3 too fast.", True)
+    bad = core.parse_output(" the the the", EX.comment)
+    assert not bad.valid and bad.topic == "unknown"
+    assert not core.parse_output(" cooking | negative | x").valid
+
+
+def test_repeated_halves_of_a_summary_are_collapsed():
+    assert core.clean_summary("Says lab computers lacked Python but says lab computers lacked Python.") ==         "Says lab computers lacked Python."
+    assert core.clean_summary("Praises the slides but says the midterm was unfair.") ==         "Praises the slides but says the midterm was unfair."
+    assert core.clean_summary("Found the the slides slides useful.") == "Found the slides useful."
+    r = core.parse_output(" technology | mixed | Says X broke but says X broke.", "X broke")
+    assert r.summary == "Says X broke." and r.valid
+
+
+def test_unsupported_words_catches_invented_content():
+    assert core.unsupported_words("Found week 3 too fast.", EX.comment) == []
+    assert core.unsupported_words("Hates the chemistry textbook.", EX.comment) == ["hates", "chemistry", "textbook"]
+
+
+def test_summarizer_runs_end_to_end_on_a_tiny_model():
+    s = core.Summarizer(tiny_gpt2(), ByteTokenizer(), max_new_tokens=5, batch_size=2)
+    out = s.summarize(["short", "a somewhat longer comment", "mail me at a@b.co"])
+    assert len(out) == 3 and out[2].redactions == 1 and "a@b.co" not in out[2].comment
+    single = core.Summarizer(s.model, s.tok, max_new_tokens=5, batch_size=1).raw(["short", "a somewhat longer comment"])
+    assert single == s.raw(["short", "a somewhat longer comment"])        # left padding does not change outputs
+
+
+def test_streamlit_page_renders_upload_and_ratings_tabs(tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv("DATA_PATH", str(tmp_path / "app.json"))
+    at = AppTest.from_file(str(Path("app/main.py").resolve()), default_timeout=60).run()
+    assert not at.exception
+    assert at.title[0].value == "Student Feedback Summarizer"
+    assert len(at.tabs) == 2 and at.text_area and at.button
+
+
+def _fs(topic, sentiment, summary="s", valid=True):
+    return core.FeedbackSummary("c", topic, sentiment, summary, valid=valid)
+
+
+def test_digest_ranks_action_items_by_how_many_students_raised_them():
+    results = [_fs("pacing", "negative", "too fast")] * 3 + [_fs("support", "mixed", "slow emails")] \
+        + [_fs("materials", "positive", "great slides")] * 2 + [_fs("unknown", "unknown", valid=False)]
+    d = core.build_digest(results)
+    assert [a["topic"] for a in d["action_items"]] == ["pacing", "support"]
+    assert d["action_items"][0]["count"] == 3
+    assert d["strengths"][0]["topic"] == "materials"
+    assert d["sentiment"] == {"positive": 2, "negative": 3, "mixed": 1} and len(d["needs_review"]) == 1
+    md = core.digest_markdown(d)
+    assert "1. **pacing** (3 students)" in md and "Read these yourself (1)" in md

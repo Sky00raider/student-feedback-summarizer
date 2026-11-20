@@ -2,6 +2,7 @@
 
   dataset                       write dataset/{train,val,test}.jsonl (+ the narrow "basic" version)
   train  [--r 8 --alpha 16]     train a LoRA adapter on distilgpt2, save models/adapter.pt
+  summarize FILE [--digest]     summarize a .csv/.txt/.json(l) of comments, print a digest
 """
 import argparse
 import json
@@ -45,6 +46,24 @@ def cmd_train(a):
     print(f"saved {a.out} ({size / 1024:.0f} KB) after {hist['seconds']:.0f}s; val loss per epoch {hist['val_loss']}")
 
 
+def cmd_summarize(a):
+    path = Path(a.file)
+    comments = core.read_feedback(path.name, path.read_bytes())
+    s = (core.Summarizer.from_merged(a.merged) if a.merged else core.Summarizer.from_adapter(a.adapter))
+    t0 = time.time()
+    results = s.summarize(comments, redact_pii=not a.keep_pii)
+    if a.json:
+        print(json.dumps([r.__dict__ for r in results], indent=1, ensure_ascii=False))
+        return
+    for r in results:
+        flag = "" if r.valid else "  [unparsed]"
+        print(f"{r.topic:<11} {r.sentiment:<8} {r.summary}{flag}")
+    print(f"\n{len(results)} comments in {time.time() - t0:.1f}s")
+    if a.digest:
+        print()
+        print(core.digest_markdown(core.build_digest(results)), end="")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="python -m app.cli", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -63,8 +82,15 @@ def main(argv=None):
     t.add_argument("--lr", type=float, default=1e-3)
     t.add_argument("--targets", default="c_attn")
     t.add_argument("--out", default=str(core.DEFAULT_ADAPTER))
+    s = sub.add_parser("summarize")
+    s.add_argument("file")
+    s.add_argument("--adapter", default=str(core.DEFAULT_ADAPTER))
+    s.add_argument("--merged", help="load a merged model folder instead of base + adapter")
+    s.add_argument("--digest", action="store_true")
+    s.add_argument("--keep-pii", action="store_true", help="do not redact emails, phone numbers, IDs, names")
+    s.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
-    {"dataset": cmd_dataset, "train": cmd_train}[a.cmd](a)
+    {"dataset": cmd_dataset, "train": cmd_train, "summarize": cmd_summarize}[a.cmd](a)
 
 
 if __name__ == "__main__":

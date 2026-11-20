@@ -542,3 +542,222 @@ def load_adapter(path: Path = DEFAULT_ADAPTER, merge: bool = True):
     if merge:
         merge_lora(model)
     return model, tok, cfg
+
+
+# =====================================================================================================
+# --- Milestone 3: Develop a Streamlit UI to upload feedback and trigger summarization.
+# =====================================================================================================
+# The UI lives in app/main.py; everything it calls is here so it can be tested without a browser:
+# reading uploads, redacting personal details, batched generation, parsing, and the course digest.
+
+COMMENT_COLUMNS = ("comment", "comments", "feedback", "response", "text", "answer", "review")
+_OUT_RE = re.compile(r"^\s*([a-z]+)\s*\|\s*([a-z]+)\s*\|\s*(.+?)\s*$", re.S)
+
+
+@dataclass
+class FeedbackSummary:
+    comment: str
+    topic: str
+    sentiment: str
+    summary: str
+    raw: str = ""
+    valid: bool = True
+    unsupported: list = field(default_factory=list)
+    redactions: int = 0
+
+
+def read_feedback(name: str, data: bytes | str) -> list[str]:
+    """Comments from an uploaded .csv (a comment-like column, else the wordiest), .json/.jsonl, or .txt
+    (one per line, or paragraphs when blank lines separate them)."""
+    text = data.decode("utf-8-sig", errors="replace") if isinstance(data, bytes) else data
+    ext = Path(name).suffix.lower()
+    if ext == ".csv":
+        rows = list(csv.reader(io.StringIO(text)))
+        if not rows:
+            return []
+        header = [h.strip().lower() for h in rows[0]]
+        col = next((header.index(c) for c in COMMENT_COLUMNS if c in header), None)
+        body = rows[1:]
+        if col is None:                     # no known header: pick the column with the most words
+            if not any(h.isalpha() for h in header):
+                body = rows
+            width = max(len(r) for r in rows)
+            col = max(range(width), key=lambda j: sum(len(r[j].split()) for r in body if j < len(r)))
+        comments = [r[col] for r in body if col < len(r)]
+    elif ext in (".json", ".jsonl"):
+        items = ([json.loads(l) for l in text.splitlines() if l.strip()] if ext == ".jsonl"
+                 else json.loads(text))
+        comments = [i if isinstance(i, str) else next((i[k] for k in COMMENT_COLUMNS if k in i), "") for i in items]
+    else:
+        parts = re.split(r"\n\s*\n", text) if re.search(r"\n\s*\n", text.strip()) else text.splitlines()
+        comments = [" ".join(p.split()) for p in parts]
+    return [c.strip() for c in comments if c and c.strip()]
+
+
+_PII = [
+    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "[email]"),
+    (re.compile(r"(?<!\w)(?:\+?\d[\d\s-]{8,}\d)(?!\w)"), "[phone]"),
+    (re.compile(r"\b[A-Z]{1,4}\d{5,}\b|\b\d{7,}\b"), "[id]"),
+    (re.compile(r"\b([Mm]y name is|I am|I'm|[Tt]his is)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b"), r"\1 [name]"),
+]
+
+
+def redact(text: str) -> tuple[str, int]:
+    """Remove emails, phone numbers, student IDs and self-introductions. Returns (text, how many)."""
+    n = 0
+    for pattern, repl in _PII:
+        text, k = pattern.subn(repl, text)
+        n += k
+    return text, n
+
+
+_STOP = set("""a an the and or but of to in on for with at by from is was were are be been it its this that
+these those i me my we our you your they their he she his her them as so too very really just not no if then
+than about all any some more most much many there here also only even still over into out up down off do did
+does done have has had having will would can could should may might must am being one two own same such week
+course class while although however though wasn't didn't don't""".split())
+_SUMMARY_VERBS = set("""found finds felt feels says said wants wanted liked likes praises praised appreciated
+appreciates values valued enjoyed enjoys notes noted reports reported dislikes disliked rates doubts could
+never thinks thought considers student students instructor""".split())
+
+
+def _stem(w: str) -> str:
+    for suf in ("ing", "ed", "es", "s"):
+        if len(w) > len(suf) + 3 and w.endswith(suf):
+            return w[: -len(suf)]
+    return w
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9']+", text.lower())
+
+
+def unsupported_words(summary: str, comment: str) -> list[str]:
+    """Content words of the summary that never appear in the comment (a cheap hallucination check)."""
+    source = {_stem(w) for w in _words(comment)}
+    return [w for w in _words(summary)
+            if w not in _STOP and w not in _SUMMARY_VERBS and _stem(w) not in source and not w.isdigit()]
+
+
+_LEAD_VERB = re.compile(r"^(found|finds|felt|feels|says|wants|liked|likes|praises|appreciated|appreciates|values|"
+                       r"valued|enjoyed|notes|reports|dislikes|could not|never)\s+", re.I)
+
+
+def clean_summary(summary: str) -> str:
+    """Repetition guard for a small model: drop doubled words, and drop the second half of
+    '<X> but <X>' when it only repeats the first half."""
+    words = summary.split()
+    words = [w for i, w in enumerate(words) if i == 0 or w.lower() != words[i - 1].lower()]
+    text = " ".join(words)
+    if " but " in text:
+        first, second = text.split(" but ", 1)
+        a = set(_words(_LEAD_VERB.sub("", first)))
+        b = set(_words(_LEAD_VERB.sub("", second)))
+        if b and len(a & b) / len(a | b) >= 0.7:
+            text = first.rstrip(" ,.") + "."
+    return text
+
+
+def parse_output(raw: str, comment: str = "") -> FeedbackSummary:
+    """'topic | sentiment | summary' -> FeedbackSummary. Anything malformed is kept but marked invalid."""
+    text = raw.split("\n")[0]
+    m = _OUT_RE.match(text)
+    if m and m.group(1) in TOPICS and m.group(2) in SENTIMENTS:
+        summary = clean_summary(m.group(3).strip())
+        return FeedbackSummary(comment, m.group(1), m.group(2), summary, raw, True,
+                               unsupported_words(summary, comment) if comment else [])
+    return FeedbackSummary(comment, "unknown", "unknown", text.strip(), raw, False, [])
+
+
+@torch.no_grad()
+def generate(model, tok, prompts: list[list[int]], max_new_tokens: int = 40, batch_size: int = 8) -> list[str]:
+    """Greedy decoding, batched with left padding. Returns the decoded continuations."""
+    model.eval()
+    eos, outs = tok.eos_token_id, []
+    for i in range(0, len(prompts), batch_size):
+        chunk = prompts[i:i + batch_size]
+        n = max(len(p) for p in chunk)
+        ids = torch.tensor([[eos] * (n - len(p)) + p for p in chunk])
+        mask = torch.tensor([[0] * (n - len(p)) + [1] * len(p) for p in chunk])
+        gen = model.generate(input_ids=ids, attention_mask=mask, max_new_tokens=max_new_tokens, do_sample=False,
+                             pad_token_id=eos, eos_token_id=eos)
+        for row in gen[:, n:]:
+            row = row.tolist()
+            row = row[: row.index(eos)] if eos in row else row
+            outs.append(tok.decode(row, skip_special_tokens=True))
+    return outs
+
+
+class Summarizer:
+    """Model + tokenizer -> structured summaries. Works with a merged model or a LoRA-wrapped one."""
+
+    def __init__(self, model, tok, max_new_tokens: int = 40, batch_size: int = 8, max_prompt_tokens: int = 160):
+        self.model, self.tok = model, tok
+        self.max_new_tokens, self.batch_size, self.max_prompt_tokens = max_new_tokens, batch_size, max_prompt_tokens
+
+    @classmethod
+    def from_adapter(cls, path: Path = DEFAULT_ADAPTER, merge: bool = True, **kw) -> "Summarizer":
+        model, tok, _ = load_adapter(path, merge=merge)
+        return cls(model, tok, **kw)
+
+    @classmethod
+    def from_merged(cls, directory: Path, **kw) -> "Summarizer":
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        return cls(AutoModelForCausalLM.from_pretrained(directory).eval(), AutoTokenizer.from_pretrained(directory), **kw)
+
+    def raw(self, comments: list[str]) -> list[str]:
+        prompts = [prompt_ids(self.tok, c, self.max_prompt_tokens) for c in comments]
+        return generate(self.model, self.tok, prompts, self.max_new_tokens, self.batch_size)
+
+    def summarize(self, comments: list[str], redact_pii: bool = True) -> list[FeedbackSummary]:
+        cleaned = [redact(c) if redact_pii else (c, 0) for c in comments]
+        results = []
+        for (text, n), raw in zip(cleaned, self.raw([t for t, _ in cleaned])):
+            r = parse_output(raw, text)
+            r.redactions = n
+            results.append(r)
+        return results
+
+
+def build_digest(results: list[FeedbackSummary]) -> dict:
+    """Course-level view: sentiment split, topic counts, action items (complaints grouped by topic, the
+    most-raised topic first) and strengths."""
+    valid = [r for r in results if r.valid]
+    by_topic: dict[str, Counter] = defaultdict(Counter)
+    for r in valid:
+        by_topic[r.topic][r.sentiment] += 1
+    issues, strengths = defaultdict(list), defaultdict(list)
+    for r in valid:
+        if r.sentiment in ("negative", "mixed"):
+            issues[r.topic].append(r.summary)
+        else:
+            strengths[r.topic].append(r.summary)
+    rank = lambda d: sorted(d.items(), key=lambda kv: (-len(kv[1]), TOPICS.index(kv[0])))  # noqa: E731
+    sent = Counter(r.sentiment for r in valid)
+    return {
+        "n_comments": len(results), "n_valid": len(valid),
+        "sentiment": {s: sent.get(s, 0) for s in SENTIMENTS},
+        "topics": {t: dict(by_topic[t]) for t in TOPICS if t in by_topic},
+        "action_items": [{"topic": t, "count": len(v), "examples": v[:3]} for t, v in rank(issues)],
+        "strengths": [{"topic": t, "count": len(v), "examples": v[:2]} for t, v in rank(strengths)],
+        "needs_review": [r.comment for r in results if not r.valid or len(r.unsupported) >= 3],
+    }
+
+
+def digest_markdown(d: dict, title: str = "Course feedback digest") -> str:
+    n = max(d["n_valid"], 1)
+    s = d["sentiment"]
+    lines = [f"# {title}", "",
+             f"{d['n_comments']} comments: {s['negative']} negative ({s['negative'] / n:.0%}), "
+             f"{s['mixed']} mixed, {s['positive']} positive.", "", "## Action items (most raised first)", ""]
+    for i, a in enumerate(d["action_items"], 1):
+        lines.append(f"{i}. **{a['topic']}** ({a['count']} student{'s' if a['count'] != 1 else ''})")
+        lines += [f"   - {e}" for e in a["examples"]]
+    if not d["action_items"]:
+        lines.append("None raised.")
+    lines += ["", "## What is working", ""]
+    lines += [f"- **{a['topic']}** ({a['count']}): {a['examples'][0]}" for a in d["strengths"]] or ["Nothing yet."]
+    if d["needs_review"]:
+        lines += ["", f"## Read these yourself ({len(d['needs_review'])})", ""]
+        lines += [f"- {c}" for c in d["needs_review"]]
+    return "\n".join(lines) + "\n"
