@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="869" height="955" viewBox="0 0 869 955">
+<rect width="869" height="955" rx="10" fill="#1e1e2e"/>
+<circle cx="20" cy="18" r="6" fill="#f38ba8"/><circle cx="40" cy="18" r="6" fill="#f9e2af"/><circle cx="60" cy="18" r="6" fill="#a6e3a1"/>
+<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
+<text x="18" y="44" fill="#89b4fa">$ python -m app.cli summarize samples/cs101_feedback.csv --digest</text>
+<text x="18" y="63" fill="#f38ba8">pacing      negative Found week 6 too fast to keep up with.</text>
+<text x="18" y="82" fill="#a6e3a1">support     positive Appreciated the TAs' super patient TAs.</text>
+<text x="18" y="101" fill="#f38ba8">technology  negative Reports Gradescope crashing on submission 3.</text>
+<text x="18" y="120" fill="#fab387">assignments mixed    Found lectures clear but says homework did not match the class content.</text>
+<text x="18" y="139" fill="#f38ba8">workload    negative Spends over 20 hours a week on the course.</text>
+<text x="18" y="158" fill="#a6e3a1">technology  positive Found live coding demos useful for looping and functions.</text>
+<text x="18" y="177" fill="#f38ba8">assignments negative Found the project 2 instructions confusing.</text>
+<text x="18" y="196" fill="#fab387">assessment  mixed    Praises the slides but says the midterm covered material not taught in class.</text>
+<text x="18" y="215" fill="#f38ba8">support     negative Says emails to the professor went unanswered.</text>
+<text x="18" y="234" fill="#a6e3a1">assessment  positive Found weekly quizzes a good check of understanding.</text>
+<text x="18" y="253" fill="#f38ba8">pacing      negative Reports the week 6 week rushed to the course.</text>
+<text x="18" y="272" fill="#fab387">technology  mixed    Says lab computers lacked Python 3.12 installed.</text>
+<text x="18" y="291" fill="#f38ba8">assignments negative Found the final project too big for the time given.</text>
+<text x="18" y="310" fill="#a6e3a1">materials   positive Found lectures made quickly and made revision easy.</text>
+<text x="18" y="329" fill="#cdd6f4"></text>
+<text x="18" y="348" fill="#cdd6f4">14 comments in 7.4s</text>
+<text x="18" y="367" fill="#cdd6f4"></text>
+<text x="18" y="386" fill="#f9e2af"># Course feedback digest</text>
+<text x="18" y="405" fill="#cdd6f4"></text>
+<text x="18" y="424" fill="#cdd6f4">14 comments: 7 negative (50%), 3 mixed, 4 positive.</text>
+<text x="18" y="443" fill="#cdd6f4"></text>
+<text x="18" y="462" fill="#f9e2af">## Action items (most raised first)</text>
+<text x="18" y="481" fill="#cdd6f4"></text>
+<text x="18" y="500" fill="#cdd6f4">1. assignments (3 students)</text>
+<text x="18" y="519" fill="#cdd6f4">   - Found lectures clear but says homework did not match the class content.</text>
+<text x="18" y="538" fill="#cdd6f4">   - Found the project 2 instructions confusing.</text>
+<text x="18" y="557" fill="#cdd6f4">   - Found the final project too big for the time given.</text>
+<text x="18" y="576" fill="#cdd6f4">2. pacing (2 students)</text>
+<text x="18" y="595" fill="#cdd6f4">   - Found week 6 too fast to keep up with.</text>
+<text x="18" y="614" fill="#cdd6f4">   - Reports the week 6 week rushed to the course.</text>
+<text x="18" y="633" fill="#cdd6f4">3. technology (2 students)</text>
+<text x="18" y="652" fill="#cdd6f4">   - Reports Gradescope crashing on submission 3.</text>
+<text x="18" y="671" fill="#cdd6f4">   - Says lab computers lacked Python 3.12 installed.</text>
+<text x="18" y="690" fill="#cdd6f4">4. workload (1 student)</text>
+<text x="18" y="709" fill="#cdd6f4">   - Spends over 20 hours a week on the course.</text>
+<text x="18" y="728" fill="#cdd6f4">5. assessment (1 student)</text>
+<text x="18" y="747" fill="#cdd6f4">   - Praises the slides but says the midterm covered material not taught in class.</text>
+<text x="18" y="766" fill="#cdd6f4">6. support (1 student)</text>
+<text x="18" y="785" fill="#cdd6f4">   - Says emails to the professor went unanswered.</text>
+<text x="18" y="804" fill="#cdd6f4"></text>
+<text x="18" y="823" fill="#f9e2af">## What is working</text>
+<text x="18" y="842" fill="#cdd6f4"></text>
+<text x="18" y="861" fill="#cdd6f4">- assessment (1): Found weekly quizzes a good check of understanding.</text>
+<text x="18" y="880" fill="#cdd6f4">- materials (1): Found lectures made quickly and made revision easy.</text>
+<text x="18" y="899" fill="#cdd6f4">- support (1): Appreciated the TAs' super patient TAs.</text>
+<text x="18" y="918" fill="#cdd6f4">- technology (1): Found live coding demos useful for looping and functions.</text>
+</g>
+</svg>

@@ -2,6 +2,7 @@
 
   dataset                       write dataset/{train,val,test}.jsonl (+ the narrow "basic" version)
   train  [--r 8 --alpha 16]     train a LoRA adapter on distilgpt2, save models/adapter.pt
+  merge                         merge the adapter into the weights, save models/merged/, check equality
   summarize FILE [--digest]     summarize a .csv/.txt/.json(l) of comments, print a digest
 """
 import argparse
@@ -46,6 +47,27 @@ def cmd_train(a):
     print(f"saved {a.out} ({size / 1024:.0f} KB) after {hist['seconds']:.0f}s; val loss per epoch {hist['val_loss']}")
 
 
+def cmd_merge(a):
+    import torch
+    saved = core.read_adapter(a.adapter)
+    lora_model, tok = core.load_base(saved["config"]["base"])
+    core.apply_adapter(lora_model, saved)
+    merged, _ = core.load_base(saved["config"]["base"])
+    core.apply_adapter(merged, saved)
+    n = core.merge_lora(merged)
+    probe = [e.comment for e in core.load_jsonl(core.DATASET_DIR / "test.jsonl")[:16]]
+    ids = torch.tensor([core.prompt_ids(tok, probe[0])])
+    diff = core.max_logit_diff(lora_model, merged, ids)
+    a_out, b_out = core.Summarizer(lora_model, tok).raw(probe), core.Summarizer(merged, tok).raw(probe)
+    t_lora = core.time_generation(core.Summarizer(lora_model, tok), probe, 2)
+    t_merged = core.time_generation(core.Summarizer(merged, tok), probe, 2)
+    size = core.save_merged(merged, tok, a.out)
+    print(f"merged {n} LoRA layers; max |logit difference| {diff:.2e}; "
+          f"identical outputs on {sum(x == y for x, y in zip(a_out, b_out))}/{len(probe)} comments")
+    print(f"latency: {t_lora:.0f} ms/comment with LoRA layers, {t_merged:.0f} ms/comment merged")
+    print(f"wrote {a.out}/ ({size / 1e6:.0f} MB, a plain GPT-2 that loads without any LoRA code)")
+
+
 def cmd_summarize(a):
     path = Path(a.file)
     comments = core.read_feedback(path.name, path.read_bytes())
@@ -82,6 +104,9 @@ def main(argv=None):
     t.add_argument("--lr", type=float, default=1e-3)
     t.add_argument("--targets", default="c_attn")
     t.add_argument("--out", default=str(core.DEFAULT_ADAPTER))
+    m = sub.add_parser("merge")
+    m.add_argument("--adapter", default=str(core.DEFAULT_ADAPTER))
+    m.add_argument("--out", default="models/merged")
     s = sub.add_parser("summarize")
     s.add_argument("file")
     s.add_argument("--adapter", default=str(core.DEFAULT_ADAPTER))
@@ -90,7 +115,7 @@ def main(argv=None):
     s.add_argument("--keep-pii", action="store_true", help="do not redact emails, phone numbers, IDs, names")
     s.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
-    {"dataset": cmd_dataset, "train": cmd_train, "summarize": cmd_summarize}[a.cmd](a)
+    {"dataset": cmd_dataset, "train": cmd_train, "merge": cmd_merge, "summarize": cmd_summarize}[a.cmd](a)
 
 
 if __name__ == "__main__":

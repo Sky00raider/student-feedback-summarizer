@@ -263,3 +263,41 @@ def test_keyword_baseline_gets_obvious_cases():
     assert core.keyword_baseline("The slides were great, but the midterm was confusing.").sentiment == "mixed"
     assert core.keyword_baseline("The TA was really helpful.").topic == "support"
     assert len(core.keyword_baseline("word " * 40).summary.split()) == 20
+
+
+# ---------------------------------------------------------------- Milestone 5: merging
+def _trained_tiny():
+    model = tiny_gpt2()
+    core.inject_lora(model, ("c_attn", "c_proj"), r=4, alpha=8)
+    with torch.no_grad():
+        for n, p in model.named_parameters():
+            if n.endswith(".B"):
+                p.normal_(0, 0.05)                 # pretend training happened
+    return model
+
+
+def test_merging_keeps_the_outputs_and_removes_lora_layers():
+    model = _trained_tiny()
+    ids = torch.tensor([[5, 6, 7, 8, 9, 10]])
+    before = model(input_ids=ids).logits.clone()
+    assert core.merge_lora(model) == 6                     # 2 layers x (c_attn + attn c_proj + mlp c_proj)
+    assert not any(isinstance(m, core.LoRALinear) for m in model.modules())
+    assert torch.allclose(model(input_ids=ids).logits, before, atol=1e-5)
+    assert core.count_parameters(model)[1] == core.count_parameters(tiny_gpt2())[1]
+
+
+def test_merged_model_saves_as_plain_gpt2_and_reloads(tmp_path):
+    model = _trained_tiny()
+    core.save_merged(model, ByteTokenizer(), tmp_path / "m")
+    reloaded = GPT2LMHeadModel.from_pretrained(tmp_path / "m").eval()
+    assert core.max_logit_diff(model, reloaded, torch.tensor([[1, 2, 3]])) < 1e-5
+
+
+def test_merged_and_unmerged_generate_the_same_text():
+    tok = ByteTokenizer()
+    a, b = _trained_tiny(), _trained_tiny()
+    core.merge_lora(b)
+    prompts = ["the pace was fast", "slides"]
+    sa, sb = core.Summarizer(a, tok, max_new_tokens=8), core.Summarizer(b, tok, max_new_tokens=8)
+    assert sa.raw(prompts) == sb.raw(prompts)
+    assert core.time_generation(sb, prompts) > 0

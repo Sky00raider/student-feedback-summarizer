@@ -870,3 +870,41 @@ def confusion(preds: list[FeedbackSummary], gold: list[Example], attr: str = "to
 def gold_as_predictions(gold: list[Example]) -> list[FeedbackSummary]:
     """The reference summaries scored like predictions (an upper bound for the faithfulness check)."""
     return [FeedbackSummary(g.comment, g.topic, g.sentiment, g.summary) for g in gold]
+
+
+# =====================================================================================================
+# --- Milestone 5: Implement adapter merging for inference.
+# =====================================================================================================
+# W' = W + (alpha / r) B @ A (transposed for GPT-2's Conv1D). After merging the model is a plain GPT-2
+# again: same size as the base, no LoRA code needed to load it, and one matmul per layer instead of three.
+
+def merge_lora(model: nn.Module) -> int:
+    """Replace every LoRALinear by its base layer with the update baked in. Returns how many."""
+    names = [n for n, m in model.named_modules() if isinstance(m, LoRALinear)]
+    for name in names:
+        _replace(model, name, model.get_submodule(name).merged())
+    return len(names)
+
+
+def save_merged(model, tok, directory: Path) -> int:
+    """Merge (if needed) and write a standard Hugging Face folder. Returns its size in bytes."""
+    merge_lora(model)
+    directory = Path(directory)
+    model.save_pretrained(directory)
+    tok.save_pretrained(directory)
+    return sum(f.stat().st_size for f in directory.rglob("*") if f.is_file())
+
+
+@torch.no_grad()
+def max_logit_diff(a, b, ids: torch.Tensor) -> float:
+    return float((a(input_ids=ids).logits - b(input_ids=ids).logits).abs().max())
+
+
+def time_generation(summarizer: Summarizer, comments: list[str], repeats: int = 1) -> float:
+    """Milliseconds per comment for summarizer.raw (best of `repeats`)."""
+    best = float("inf")
+    for _ in range(repeats):
+        t0 = time.perf_counter()
+        summarizer.raw(comments)
+        best = min(best, time.perf_counter() - t0)
+    return 1000 * best / max(len(comments), 1)
