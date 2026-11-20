@@ -13,3 +13,4 @@ data/
 models/merged/
 models/sweep/
 logs/
+models/adapter_*.pt

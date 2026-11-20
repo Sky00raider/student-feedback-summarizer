@@ -11,7 +11,7 @@ args = ["summarize", "samples/cs101_feedback.csv", "--digest"]
 if (ROOT / "models" / "merged").is_dir():
     args += ["--merged", "models/merged"]
 env = {**os.environ, "PYTHONIOENCODING": "utf-8", "HF_HUB_OFFLINE": "1", "TRANSFORMERS_VERBOSITY": "error"}
-out = subprocess.run([sys.executable, "-m", "app.cli", *args], cwd=ROOT, capture_output=True, text=True,
+out = subprocess.run([sys.executable, "-m", "app.cli", *args], cwd=ROOT, capture_output=True, encoding="utf-8", errors="replace",
                      check=True, env=env).stdout
 shown = [a for a in args if a not in ("--merged", "models/merged")]
 lines = [("cmd", "$ python -m app.cli " + " ".join(shown))]

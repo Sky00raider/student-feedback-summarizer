@@ -1,0 +1,97 @@
+{
+ "r=2 alpha=4": {
+  "params": 147456,
+  "seconds": 165.7,
+  "val_loss": 1.5221,
+  "val": {
+   "topic_acc": 0.5,
+   "sentiment_acc": 0.6304347826086957,
+   "rougeL": 0.44228110446513236,
+   "valid_format": 1.0,
+   "supported_words": 0.8888888888888888
+  },
+  "freeform": {
+   "topic_acc": 0.4375,
+   "sentiment_acc": 0.6458333333333334,
+   "rougeL": 0.2731041798402068,
+   "valid_format": 1.0,
+   "supported_words": 0.9230769230769231
+  }
+ },
+ "r=8 alpha=16": {
+  "params": 589824,
+  "seconds": 153.3,
+  "val_loss": 1.298,
+  "val": {
+   "topic_acc": 0.5869565217391305,
+   "sentiment_acc": 0.6195652173913043,
+   "rougeL": 0.46208040843180204,
+   "valid_format": 1.0,
+   "supported_words": 0.8651685393258427
+  },
+  "freeform": {
+   "topic_acc": 0.625,
+   "sentiment_acc": 0.6458333333333334,
+   "rougeL": 0.29069923937805286,
+   "valid_format": 1.0,
+   "supported_words": 0.9250814332247557
+  }
+ },
+ "r=32 alpha=64": {
+  "params": 2359296,
+  "seconds": 1541.2,
+  "val_loss": 1.1289,
+  "val": {
+   "topic_acc": 0.6956521739130435,
+   "sentiment_acc": 0.717391304347826,
+   "rougeL": 0.5122169323011877,
+   "valid_format": 1.0,
+   "supported_words": 0.8459869848156182
+  },
+  "freeform": {
+   "topic_acc": 0.6458333333333334,
+   "sentiment_acc": 0.75,
+   "rougeL": 0.2987538705913129,
+   "valid_format": 1.0,
+   "supported_words": 0.8776223776223776
+  }
+ },
+ "r=8 alpha=64": {
+  "params": 589824,
+  "seconds": 172.9,
+  "val_loss": 1.1504,
+  "val": {
+   "topic_acc": 0.6956521739130435,
+   "sentiment_acc": 0.6847826086956522,
+   "rougeL": 0.5019536366650224,
+   "valid_format": 1.0,
+   "supported_words": 0.8565488565488566
+  },
+  "freeform": {
+   "topic_acc": 0.5833333333333334,
+   "sentiment_acc": 0.6875,
+   "rougeL": 0.29176137726286056,
+   "valid_format": 1.0,
+   "supported_words": 0.8829787234042553
+  }
+ },
+ "r=8 alpha=16, template data only": {
+  "params": 589824,
+  "seconds": 172.7,
+  "val_loss": 1.4311,
+  "val": {
+   "topic_acc": 0.5869565217391305,
+   "sentiment_acc": 0.7391304347826086,
+   "rougeL": 0.4731789748249968,
+   "valid_format": 1.0,
+   "supported_words": 0.8502879078694818
+  },
+  "freeform": {
+   "topic_acc": 0.5208333333333334,
+   "sentiment_acc": 0.6041666666666666,
+   "rougeL": 0.2370812072942903,
+   "valid_format": 1.0,
+   "supported_words": 0.7945619335347431
+  }
+ }
+}

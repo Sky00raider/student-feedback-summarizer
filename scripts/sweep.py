@@ -1,4 +1,4 @@
-"""Stretch ideas 1 and 2: how rank, alpha, target layers and dataset variety change summary quality.
+"""Stretch ideas 1 and 2: how LoRA rank, alpha and training data change summary quality.
 
 Every run gets the same budget (400 training examples, 2 epochs, lr 2e-3) and is scored on the
 mixed validation split (60 template + 32 varied) and on the independent freeform set. Resumable: finished runs in results/sweep.json are skipped.

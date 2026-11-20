@@ -1,6 +1,6 @@
 # Results
 
-Adapter: `models\adapter.pt`, r=16, alpha=32, targets c_attn, c_proj, c_fc, 888 training examples, 3 epochs, trained in 529 s on a laptop CPU.
+Adapter: `models/adapter.pt`, r=16, alpha=32, targets c_attn, c_proj, c_fc, 888 training examples, 3 epochs, trained in 529 s on a laptop CPU.
 
 ## synthetic test (held-out phrasings + courses)
 
