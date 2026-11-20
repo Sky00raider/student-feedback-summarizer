@@ -1,0 +1,166 @@
+{
+ "metrics": {
+  "synthetic test (held-out phrasings + courses)": {
+   "Keyword baseline (no model)": {
+    "n": 120,
+    "valid_format": 1.0,
+    "topic_acc": 0.6833333333333333,
+    "sentiment_acc": 0.5583333333333333,
+    "issue_acc": 0.5916666666666667,
+    "rouge1": 0.4615460271100395,
+    "rouge2": 0.26150837277561206,
+    "rougeL": 0.4264138769191147,
+    "summary_words": 11.983333333333333,
+    "compression": 0.8367139611654525,
+    "supported_words": 1.0
+   },
+   "distilgpt2, 3-shot prompt, no LoRA": {
+    "n": 120,
+    "valid_format": 0.3333333333333333,
+    "topic_acc": 0.016666666666666666,
+    "sentiment_acc": 0.10833333333333334,
+    "issue_acc": 0.4,
+    "rouge1": 0.14934482431977225,
+    "rouge2": 0.01677768867403592,
+    "rougeL": 0.13515683298104564,
+    "summary_words": 11.508333333333333,
+    "compression": 0.8389625409938744,
+    "supported_words": 0.15275590551181106
+   },
+   "distilgpt2 + LoRA (unmerged)": {
+    "n": 120,
+    "valid_format": 1.0,
+    "topic_acc": 0.7166666666666667,
+    "sentiment_acc": 0.8833333333333333,
+    "issue_acc": 0.9166666666666666,
+    "rouge1": 0.41939466459094993,
+    "rouge2": 0.21327376405299653,
+    "rougeL": 0.40601281580996484,
+    "summary_words": 9.95,
+    "compression": 0.6557826961080055,
+    "supported_words": 0.8169257340241796
+   },
+   "distilgpt2 + LoRA, merged": {
+    "n": 120,
+    "valid_format": 1.0,
+    "topic_acc": 0.7166666666666667,
+    "sentiment_acc": 0.8833333333333333,
+    "issue_acc": 0.9166666666666666,
+    "rouge1": 0.41939466459094993,
+    "rouge2": 0.21327376405299653,
+    "rougeL": 0.40601281580996484,
+    "summary_words": 9.95,
+    "compression": 0.6557826961080055,
+    "supported_words": 0.8169257340241796
+   },
+   "Reference summaries (upper bound)": {
+    "n": 120,
+    "valid_format": 1.0,
+    "topic_acc": 1.0,
+    "sentiment_acc": 1.0,
+    "issue_acc": 1.0,
+    "rouge1": 1.0,
+    "rouge2": 1.0,
+    "rougeL": 1.0,
+    "summary_words": 10.5,
+    "compression": 0.6952069285070431,
+    "supported_words": 0.7151162790697674
+   }
+  },
+  "freeform (48 comments written independently)": {
+   "Keyword baseline (no model)": {
+    "n": 48,
+    "valid_format": 1.0,
+    "topic_acc": 0.6458333333333334,
+    "sentiment_acc": 0.625,
+    "issue_acc": 0.7083333333333334,
+    "rouge1": 0.2998650418707216,
+    "rouge2": 0.09593556497860174,
+    "rougeL": 0.2518663962833725,
+    "summary_words": 11.354166666666666,
+    "compression": 0.45346243453334534,
+    "supported_words": 1.0
+   },
+   "distilgpt2, 3-shot prompt, no LoRA": {
+    "n": 48,
+    "valid_format": 0.2708333333333333,
+    "topic_acc": 0.020833333333333332,
+    "sentiment_acc": 0.08333333333333333,
+    "issue_acc": 0.3541666666666667,
+    "rouge1": 0.06465877377851192,
+    "rouge2": 0.0011904761904761904,
+    "rougeL": 0.052221584433994994,
+    "summary_words": 8.583333333333334,
+    "compression": 0.38500940529715616,
+    "supported_words": 0.040000000000000036
+   },
+   "distilgpt2 + LoRA (unmerged)": {
+    "n": 48,
+    "valid_format": 1.0,
+    "topic_acc": 0.9375,
+    "sentiment_acc": 0.6041666666666666,
+    "issue_acc": 0.8333333333333334,
+    "rouge1": 0.3507228903608215,
+    "rouge2": 0.13583280618791227,
+    "rougeL": 0.313322648177303,
+    "summary_words": 13.104166666666666,
+    "compression": 0.5199939261376133,
+    "supported_words": 0.868421052631579
+   },
+   "distilgpt2 + LoRA, merged": {
+    "n": 48,
+    "valid_format": 1.0,
+    "topic_acc": 0.9375,
+    "sentiment_acc": 0.6041666666666666,
+    "issue_acc": 0.8333333333333334,
+    "rouge1": 0.3507228903608215,
+    "rouge2": 0.13583280618791227,
+    "rougeL": 0.313322648177303,
+    "summary_words": 13.104166666666666,
+    "compression": 0.5199939261376133,
+    "supported_words": 0.868421052631579
+   },
+   "Reference summaries (upper bound)": {
+    "n": 48,
+    "valid_format": 1.0,
+    "topic_acc": 1.0,
+    "sentiment_acc": 1.0,
+    "issue_acc": 1.0,
+    "rouge1": 1.0,
+    "rouge2": 1.0,
+    "rougeL": 1.0,
+    "summary_words": 14.645833333333334,
+    "compression": 0.5865043338677401,
+    "supported_words": 0.6536697247706422
+   }
+  }
+ },
+ "merge": {
+  "layers_merged": 24,
+  "max_logit_diff": 9.1552734375e-05,
+  "identical_outputs": {
+   "synthetic test (held-out phrasings + courses)": 120,
+   "freeform (48 comments written independently)": 48
+  },
+  "ms_per_comment": {
+   "unmerged": 836.6975312492286,
+   "merged": 469.78165624750545
+  },
+  "adapter_kb": 4625.7685546875,
+  "lora_params": 1179648,
+  "base_params": 83092224,
+  "config": {
+   "r": 16,
+   "alpha": 32.0,
+   "targets": [
+    "c_attn",
+    "c_proj",
+    "c_fc"
+   ],
+   "lr": 0.002,
+   "epochs": 3
+  },
+  "train_seconds": 528.6,
+  "n_train": 888
+ }
+}

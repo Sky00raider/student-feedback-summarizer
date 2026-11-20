@@ -237,3 +237,29 @@ def test_digest_ranks_action_items_by_how_many_students_raised_them():
     assert d["sentiment"] == {"positive": 2, "negative": 3, "mixed": 1} and len(d["needs_review"]) == 1
     md = core.digest_markdown(d)
     assert "1. **pacing** (3 students)" in md and "Read these yourself (1)" in md
+
+
+# ---------------------------------------------------------------- Milestone 4: evaluation
+def test_rouge_scores_known_cases():
+    assert core.rouge_n("the cat sat", "the cat sat", 1) == 1.0
+    assert core.rouge_n("the cat sat", "dog", 1) == 0.0
+    assert core.rouge_n("a b c d", "a b x y", 2) == pytest.approx(1 / 3)
+    assert core.rouge_l("a b c d", "a x c d") == pytest.approx(0.75)
+
+
+def test_evaluate_scores_perfect_and_wrong_predictions():
+    gold = [EX, Example("t2", "loved the slides", "materials", "positive", "Liked the slides.")]
+    perfect = core.evaluate(core.gold_as_predictions(gold), gold)
+    assert perfect["topic_acc"] == perfect["sentiment_acc"] == perfect["rouge1"] == perfect["valid_format"] == 1.0
+    wrong = core.evaluate([_fs("support", "mixed", "nothing related"), _fs("x", "y", "q", valid=False)], gold)
+    assert wrong["topic_acc"] == 0 and wrong["valid_format"] == 0.5 and wrong["rouge1"] == 0
+    assert wrong["issue_acc"] == 1.0          # "mixed" for a negative comment still counts as an issue
+    assert core.confusion([_fs("support", "negative")], [EX])["pacing"] == {"support": 1}
+
+
+def test_keyword_baseline_gets_obvious_cases():
+    r = core.keyword_baseline("The pace in week 3 was way too fast.")
+    assert (r.topic, r.sentiment) == ("pacing", "negative")
+    assert core.keyword_baseline("The slides were great, but the midterm was confusing.").sentiment == "mixed"
+    assert core.keyword_baseline("The TA was really helpful.").topic == "support"
+    assert len(core.keyword_baseline("word " * 40).summary.split()) == 20

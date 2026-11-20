@@ -761,3 +761,112 @@ def digest_markdown(d: dict, title: str = "Course feedback digest") -> str:
         lines += ["", f"## Read these yourself ({len(d['needs_review'])})", ""]
         lines += [f"- {c}" for c in d["needs_review"]]
     return "\n".join(lines) + "\n"
+
+
+# =====================================================================================================
+# --- Milestone 4: Evaluate the quality of generated summaries against original feedback.
+# =====================================================================================================
+# Against the ground-truth summaries: ROUGE-1/2/L F1 (written here, no extra dependency), topic and
+# sentiment accuracy, the share of well-formed outputs. Against the original comment: how many summary
+# words the comment does not support, and how much shorter the summary is. A keyword baseline (topic and
+# sentiment by keyword lists, first 20 words of the comment as the "summary") is the bar to beat.
+
+def _ngrams(tokens: list[str], n: int) -> Counter:
+    return Counter(tuple(tokens[i:i + n]) for i in range(len(tokens) - n + 1))
+
+
+def _f1(overlap: int, n_hyp: int, n_ref: int) -> float:
+    if not overlap or not n_hyp or not n_ref:
+        return 0.0
+    p, r = overlap / n_hyp, overlap / n_ref
+    return 2 * p * r / (p + r)
+
+
+def rouge_n(ref: str, hyp: str, n: int = 1) -> float:
+    r, h = _ngrams(_words(ref), n), _ngrams(_words(hyp), n)
+    return _f1(sum((r & h).values()), sum(h.values()), sum(r.values()))
+
+
+def _lcs(a: list[str], b: list[str]) -> int:
+    prev = [0] * (len(b) + 1)
+    for x in a:
+        cur = [0]
+        for j, y in enumerate(b):
+            cur.append(prev[j] + 1 if x == y else max(prev[j + 1], cur[j]))
+        prev = cur
+    return prev[-1]
+
+
+def rouge_l(ref: str, hyp: str) -> float:
+    r, h = _words(ref), _words(hyp)
+    return _f1(_lcs(r, h), len(h), len(r))
+
+
+TOPIC_KEYWORDS = {
+    "pacing": ["pace", "fast", "rushed", "rush", "slow", "speed", "crammed", "quickly", "behind"],
+    "workload": ["workload", "hours", "heavy", "too much", "deadlines", "load", "busy", "time-consuming"],
+    "lectures": ["lecture", "lecturer", "professor explained", "explain", "boring", "engaging", "talk"],
+    "assignments": ["assignment", "homework", "project", "problem set", "starter", "instructions"],
+    "assessment": ["exam", "midterm", "final", "quiz", "grade", "grading", "rubric", "marks", "test"],
+    "materials": ["slides", "textbook", "notes", "reading", "videos", "book", "cheat sheet"],
+    "support": ["ta", "tas", "office hours", "email", "forum", "help", "reply", "respond"],
+    "technology": ["moodle", "canvas", "gradescope", "jupyter", "website", "platform", "software", "audio",
+                   "crash", "lab computers", "blackboard", "online", "upload"],
+}
+POS_WORDS = set("great good clear helpful useful fair engaging excellent love loved liked enjoyed manageable easy "
+                "patient amazing best interesting well thank thanks awesome right helped".split())
+NEG_WORDS = set("bad confusing hard too unclear heavy late unanswered crashing crashed terrible poor never "
+                "inconsistent outdated broken missing frustrating exhausting rushed lost boring difficult "
+                "unrealistic wrong errors no lacked worst annoying".split())
+CONTRAST = ("but", "however", "although", "though", "while", "on the other hand", "sadly", "to be fair")
+
+
+def keyword_baseline(comment: str) -> FeedbackSummary:
+    """No model at all: keyword topic, lexicon sentiment, the first 20 words as the summary."""
+    low = " " + " ".join(_words(comment)) + " "
+    scores = {t: sum(low.count(f" {k} ") + low.count(f" {k}s ") for k in kws) for t, kws in TOPIC_KEYWORDS.items()}
+    topic = max(TOPICS, key=lambda t: (scores[t], -TOPICS.index(t)))
+    ws = set(_words(comment))
+    pos, neg = len(ws & POS_WORDS), len(ws & NEG_WORDS)
+    contrast = any(f" {c} " in low for c in CONTRAST)
+    sentiment = "mixed" if pos and neg and contrast else ("negative" if neg >= pos and neg else "positive")
+    summary = " ".join(re.split(r"(?<=[.!?])\s", comment.strip())[0].split()[:20])
+    return FeedbackSummary(comment, topic, sentiment, summary, "", True, [])
+
+
+def evaluate(preds: list[FeedbackSummary], gold: list[Example]) -> dict:
+    """Quality numbers for predictions aligned with gold examples (fractions 0..1, except word counts)."""
+    n = max(len(gold), 1)
+    pairs = list(zip(preds, gold))
+    out = {
+        "n": len(gold),
+        "valid_format": sum(p.valid for p in preds) / n,
+        "topic_acc": sum(p.topic == g.topic for p, g in pairs) / n,
+        "sentiment_acc": sum(p.sentiment == g.sentiment for p, g in pairs) / n,
+        # what the digest relies on: is this comment raising an issue (negative or mixed) or not?
+        "issue_acc": sum((p.sentiment in ("negative", "mixed")) == (g.sentiment in ("negative", "mixed"))
+                         for p, g in pairs) / n,
+        "rouge1": sum(rouge_n(g.summary, p.summary, 1) for p, g in pairs) / n,
+        "rouge2": sum(rouge_n(g.summary, p.summary, 2) for p, g in pairs) / n,
+        "rougeL": sum(rouge_l(g.summary, p.summary) for p, g in pairs) / n,
+        "summary_words": sum(len(p.summary.split()) for p in preds) / n,
+        "compression": sum(len(p.summary.split()) / max(len(g.comment.split()), 1) for p, g in pairs) / n,
+    }
+    content = [(len(unsupported_words(p.summary, g.comment)),
+                len([w for w in _words(p.summary) if w not in _STOP and w not in _SUMMARY_VERBS and not w.isdigit()]))
+               for p, g in pairs]
+    out["supported_words"] = 1 - sum(u for u, _ in content) / max(sum(c for _, c in content), 1)
+    return out
+
+
+def confusion(preds: list[FeedbackSummary], gold: list[Example], attr: str = "topic") -> dict:
+    labels = TOPICS if attr == "topic" else SENTIMENTS
+    m = {g: Counter() for g in labels}
+    for p, g in zip(preds, gold):
+        m[getattr(g, attr)][getattr(p, attr)] += 1
+    return {g: dict(c) for g, c in m.items()}
+
+
+def gold_as_predictions(gold: list[Example]) -> list[FeedbackSummary]:
+    """The reference summaries scored like predictions (an upper bound for the faithfulness check)."""
+    return [FeedbackSummary(g.comment, g.topic, g.sentiment, g.summary) for g in gold]
