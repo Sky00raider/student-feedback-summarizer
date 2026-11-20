@@ -98,3 +98,65 @@ def test_committed_freeform_set_is_well_formed():
     assert len(rows) == 48
     assert all(r.topic in core.TOPICS and r.sentiment in core.SENTIMENTS for r in rows)
     assert all(len(r.summary.split()) <= 20 for r in rows)
+
+
+# ---------------------------------------------------------------- Milestone 2: LoRA injection + training
+def test_fresh_lora_changes_nothing_and_only_a_b_are_trainable():
+    model = tiny_gpt2()
+    ids = torch.tensor([[1, 2, 3, 4, 5]])
+    before = model(input_ids=ids).logits
+    names = core.inject_lora(model, ("c_attn",), r=4, alpha=8)
+    assert len(names) == 2
+    assert torch.allclose(model(input_ids=ids).logits, before)          # B = 0 at start
+    trainable = [n for n, p in model.named_parameters() if p.requires_grad]
+    assert trainable and all(n.endswith((".A", ".B")) for n in trainable)
+    lora, total = core.count_parameters(model)
+    assert lora == 2 * 4 * (32 + 96) and lora < total
+
+
+def test_lora_wraps_linear_layers_too():
+    wrapped = core.LoRALinear(torch.nn.Linear(6, 5), r=2, alpha=4)
+    assert wrapped.delta_weight().shape == (5, 6)
+    with pytest.raises(TypeError):
+        core.LoRALinear(torch.nn.ReLU())
+
+
+def test_labels_mask_the_prompt_and_end_with_eos():
+    tok = ByteTokenizer()
+    ids, labels = core.encode_example(tok, EX)
+    n_prompt = len(core.prompt_ids(tok, EX.comment))
+    assert labels[:n_prompt] == [-100] * n_prompt
+    assert labels[n_prompt:] == ids[n_prompt:] and ids[-1] == tok.eos_token_id
+    assert tok.decode(ids[n_prompt:]) == " pacing | negative | Found week 3 too fast."
+
+
+def test_long_comments_are_cut_but_keep_the_summary_cue():
+    tok = ByteTokenizer()
+    ids = core.prompt_ids(tok, "word " * 500, max_prompt_tokens=60)
+    assert len(ids) == 60 and tok.decode(ids).endswith("\nSummary:")
+
+
+def test_training_lowers_the_loss_and_the_adapter_round_trips(tmp_path):
+    tok = ByteTokenizer()
+    train = [EX, Example("t2", "loved the slides", "materials", "positive", "Liked the slides.")] * 4
+    cfg = core.TrainConfig(r=4, alpha=8, lr=5e-3, epochs=6, batch_size=4)
+    model = tiny_gpt2()
+    hist = core.train_lora(model, tok, train, cfg, val=train[:2], log=None)
+    assert hist["val_loss"][-1] < hist["val_loss"][0]
+    size = core.save_adapter(model, cfg, tmp_path / "a.pt")
+    assert 0 < size < 200_000
+    fresh = tiny_gpt2()
+    loaded_cfg = core.apply_adapter(fresh, core.read_adapter(tmp_path / "a.pt"))
+    ids = torch.tensor([core.prompt_ids(tok, EX.comment)])
+    assert loaded_cfg.r == 4
+    assert torch.allclose(fresh(input_ids=ids).logits, model(input_ids=ids).logits, atol=1e-6)
+
+
+def test_adapter_with_wrong_shapes_is_refused(tmp_path):
+    model = tiny_gpt2()
+    core.inject_lora(model, ("c_attn",), r=4)
+    core.save_adapter(model, core.TrainConfig(r=4), tmp_path / "a.pt")
+    saved = core.read_adapter(tmp_path / "a.pt")
+    saved["config"]["r"] = 2
+    with pytest.raises(ValueError):
+        core.apply_adapter(tiny_gpt2(), saved)

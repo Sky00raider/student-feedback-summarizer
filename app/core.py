@@ -307,3 +307,238 @@ def dataset_stats(rows: list[Example]) -> dict:
             "sentiments": dict(Counter(r.sentiment for r in rows)), "styles": dict(Counter(r.style for r in rows)),
             "comment_words_mean": round(sum(words) / max(len(words), 1), 1),
             "summary_words_mean": round(sum(len(r.summary.split()) for r in rows) / max(len(rows), 1), 1)}
+
+
+# =====================================================================================================
+# --- Milestone 2: Implement LoRA adapter injection and training on a pre-trained LLM (e.g., GPT-2).
+# =====================================================================================================
+# LoRA by hand, no peft:  y = base(x) + (alpha / r) * (x A^T) B^T, with A (r x in) small random and
+# B (out x r) zero, so the wrapped model starts out computing exactly what the pretrained one did.
+# GPT-2 uses a `Conv1D` whose weight is stored (in, out); forward never touches it, merging transposes.
+# Training: the loss is masked to the summary tokens only (-100 on the prompt), so the model learns to
+# write summaries, not to imitate student comments.
+import torch                                                                    # noqa: E402
+from torch import nn                                                            # noqa: E402
+
+PROMPT_PREFIX, PROMPT_SUFFIX = "Feedback: ", "\nSummary:"
+
+
+def is_conv1d(layer: nn.Module) -> bool:
+    return type(layer).__name__ == "Conv1D"
+
+
+def layer_shape(layer: nn.Module) -> tuple[int, int]:
+    if isinstance(layer, nn.Linear):
+        return layer.in_features, layer.out_features
+    if is_conv1d(layer):
+        n_in, n_out = layer.weight.shape
+        return n_in, n_out
+    raise TypeError(f"LoRA does not know how to wrap {type(layer).__name__}")
+
+
+class LoRALinear(nn.Module):
+    """A frozen base layer plus a trainable low-rank update B @ A."""
+
+    def __init__(self, base: nn.Module, r: int = 8, alpha: float = 16.0):
+        super().__init__()
+        self.base = base
+        for p in base.parameters():
+            p.requires_grad_(False)
+        self.in_features, self.out_features = layer_shape(base)
+        self.r, self.alpha, self.scale = r, alpha, alpha / r
+        w = base.weight
+        self.A = nn.Parameter(torch.randn(r, self.in_features, dtype=w.dtype, device=w.device) * 0.01)
+        self.B = nn.Parameter(torch.zeros(self.out_features, r, dtype=w.dtype, device=w.device))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.base(x) + self.scale * (x @ self.A.T) @ self.B.T
+
+    def delta_weight(self) -> torch.Tensor:
+        return self.scale * (self.B @ self.A)               # (out, in)
+
+    @torch.no_grad()
+    def merged(self) -> nn.Module:
+        delta = self.delta_weight()
+        self.base.weight += delta.T if is_conv1d(self.base) else delta
+        return self.base
+
+    def extra_repr(self) -> str:
+        return f"in={self.in_features}, out={self.out_features}, r={self.r}, scale={self.scale:g}"
+
+
+def _replace(model: nn.Module, name: str, new: nn.Module) -> None:
+    parent, _, child = name.rpartition(".")
+    setattr(model.get_submodule(parent) if parent else model, child, new)
+
+
+def inject_lora(model: nn.Module, targets=("c_attn",), r: int = 8, alpha: float = 16.0) -> list[str]:
+    """Freeze everything, then wrap every layer whose name ends in one of `targets`."""
+    for p in model.parameters():
+        p.requires_grad_(False)
+    names = [n for n, m in model.named_modules()
+             if any(n == t or n.endswith("." + t) for t in targets) and not isinstance(m, LoRALinear)]
+    if not names:
+        raise ValueError(f"no layer called {targets} in the model")
+    for name in names:
+        _replace(model, name, LoRALinear(model.get_submodule(name), r, alpha))
+    return names
+
+
+def lora_state(model: nn.Module) -> dict[str, torch.Tensor]:
+    return {n: p.detach().cpu().clone() for n, p in model.named_parameters() if n.endswith((".A", ".B"))}
+
+
+def count_parameters(model: nn.Module) -> tuple[int, int]:
+    """(trainable LoRA parameters, all parameters), tied tensors counted once."""
+    seen, lora, total = set(), 0, 0
+    for n, p in model.named_parameters():
+        if id(p) in seen:
+            continue
+        seen.add(id(p))
+        total += p.numel()
+        lora += p.numel() if n.endswith((".A", ".B")) else 0
+    return lora, total
+
+
+@dataclass
+class TrainConfig:
+    r: int = 8
+    alpha: float = 16.0
+    targets: tuple = ("c_attn",)
+    lr: float = 1e-3
+    epochs: int = 3
+    batch_size: int = 8
+    max_prompt_tokens: int = 160
+    warmup: float = 0.06
+    seed: int = 0
+    base: str = BASE_MODEL
+
+
+def target_text(ex: Example) -> str:
+    return f" {ex.topic} | {ex.sentiment} | {ex.summary}"
+
+
+def prompt_ids(tok, comment: str, max_prompt_tokens: int = 160) -> list[int]:
+    """'Feedback: <comment>\\nSummary:' as ids; a long comment is cut, the suffix always stays."""
+    body = tok.encode(" ".join(comment.split()))
+    pre, suf = tok.encode(PROMPT_PREFIX), tok.encode(PROMPT_SUFFIX)
+    body = body[: max(1, max_prompt_tokens - len(pre) - len(suf))]
+    return pre + body + suf
+
+
+def encode_example(tok, ex: Example, max_prompt_tokens: int = 160) -> tuple[list[int], list[int]]:
+    """(input ids, labels): labels are -100 on the prompt, the target ids + EOS after it."""
+    p = prompt_ids(tok, ex.comment, max_prompt_tokens)
+    t = tok.encode(target_text(ex)) + [tok.eos_token_id]
+    return p + t, [-100] * len(p) + t
+
+
+def collate(batch: list[tuple[list[int], list[int]]], pad_id: int) -> dict[str, torch.Tensor]:
+    n = max(len(ids) for ids, _ in batch)
+    ids = torch.full((len(batch), n), pad_id, dtype=torch.long)
+    labels = torch.full((len(batch), n), -100, dtype=torch.long)
+    mask = torch.zeros((len(batch), n), dtype=torch.long)
+    for i, (x, y) in enumerate(batch):
+        ids[i, :len(x)], labels[i, :len(y)], mask[i, :len(x)] = torch.tensor(x), torch.tensor(y), 1
+    return {"input_ids": ids, "labels": labels, "attention_mask": mask}
+
+
+@torch.no_grad()
+def eval_loss(model, tok, examples: list[Example], cfg: TrainConfig) -> float:
+    model.eval()
+    total, count = 0.0, 0
+    for i in range(0, len(examples), cfg.batch_size):
+        batch = collate([encode_example(tok, e, cfg.max_prompt_tokens) for e in examples[i:i + cfg.batch_size]],
+                        tok.eos_token_id)
+        n_tok = int((batch["labels"][:, 1:] != -100).sum())
+        total += float(model(**batch).loss) * n_tok
+        count += n_tok
+    return total / max(count, 1)
+
+
+def train_lora(model, tok, train: list[Example], cfg: TrainConfig, val: list[Example] | None = None,
+               log=print) -> dict:
+    """Inject LoRA (if not there yet) and train A/B with AdamW + warmup/linear decay. Returns a history."""
+    torch.manual_seed(cfg.seed)
+    if not any(isinstance(m, LoRALinear) for m in model.modules()):
+        inject_lora(model, cfg.targets, cfg.r, cfg.alpha)
+    params = [p for p in model.parameters() if p.requires_grad]
+    opt = torch.optim.AdamW(params, lr=cfg.lr, weight_decay=0.0)
+    encoded = [encode_example(tok, e, cfg.max_prompt_tokens) for e in train]
+    steps = cfg.epochs * math.ceil(len(encoded) / cfg.batch_size)
+    warm = max(1, int(cfg.warmup * steps))
+    sched = torch.optim.lr_scheduler.LambdaLR(
+        opt, lambda s: min((s + 1) / warm, max(0.0, (steps - s) / max(1, steps - warm))))
+    rng = random.Random(cfg.seed)
+    history = {"step_loss": [], "val_loss": [], "seconds": 0.0, "steps": steps}
+    t0, step = time.time(), 0
+    for epoch in range(cfg.epochs):
+        model.train()
+        order = list(range(len(encoded)))
+        rng.shuffle(order)
+        for i in range(0, len(order), cfg.batch_size):
+            batch = collate([encoded[j] for j in order[i:i + cfg.batch_size]], tok.eos_token_id)
+            loss = model(**batch).loss
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(params, 1.0)
+            opt.step()
+            sched.step()
+            opt.zero_grad(set_to_none=True)
+            step += 1
+            history["step_loss"].append(round(loss.item(), 4))
+            if log and (step % 10 == 0 or step == steps):
+                log(f"epoch {epoch + 1} step {step}/{steps} loss {loss.item():.3f} ({time.time() - t0:.0f}s)")
+        if val:
+            history["val_loss"].append(round(eval_loss(model, tok, val, cfg), 4))
+            if log:
+                log(f"epoch {epoch + 1} val loss {history['val_loss'][-1]:.3f}")
+    history["seconds"] = round(time.time() - t0, 1)
+    model.eval()
+    return history
+
+
+def load_base(name: str = BASE_MODEL):
+    """Pretrained GPT-2 + tokenizer (downloads ~330 MB the first time)."""
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(name)
+    model = AutoModelForCausalLM.from_pretrained(name)
+    return model.eval(), tok
+
+
+def save_adapter(model, cfg: TrainConfig, path: Path = DEFAULT_ADAPTER, meta: dict | None = None) -> int:
+    """Only the LoRA tensors + the settings to rebuild the rest. Returns the file size in bytes."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"format_version": 1, "config": asdict(cfg), "lora": lora_state(model), "meta": meta or {}}, path)
+    return path.stat().st_size
+
+
+@torch.no_grad()
+def apply_adapter(model, saved: dict) -> TrainConfig:
+    """Inject LoRA layers into a fresh base model and copy the saved A/B in, checking names and shapes."""
+    cfg = TrainConfig(**{**saved["config"], "targets": tuple(saved["config"]["targets"])})
+    inject_lora(model, cfg.targets, cfg.r, cfg.alpha)
+    params = dict(model.named_parameters())
+    for name, t in saved["lora"].items():
+        if name not in params or params[name].shape != t.shape:
+            raise ValueError(f"adapter tensor {name} {tuple(t.shape)} does not fit this model")
+        params[name].copy_(t)
+    model.eval()
+    return cfg
+
+
+def read_adapter(path: Path = DEFAULT_ADAPTER) -> dict:
+    saved = torch.load(Path(path), map_location="cpu", weights_only=True)
+    if saved.get("format_version") != 1:
+        raise ValueError(f"unknown adapter format in {path}")
+    return saved
+
+
+def load_adapter(path: Path = DEFAULT_ADAPTER, merge: bool = True):
+    """Fresh pretrained base + saved adapter (merged by default). Returns (model, tokenizer, cfg)."""
+    saved = read_adapter(path)
+    model, tok = load_base(saved["config"]["base"])
+    cfg = apply_adapter(model, saved)
+    if merge:
+        merge_lora(model)
+    return model, tok, cfg
