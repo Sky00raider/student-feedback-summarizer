@@ -27,7 +27,7 @@ In the app, click "Use the sample CS101 survey", then Summarize. The same thing 
 python -m app.cli summarize samples/cs101_feedback.csv --digest
 ```
 
-Run the tests with `pytest`. There are 35; they use no network, a tiny random GPT-2 and a byte tokenizer, so they finish quickly.
+Run the tests with `pytest`. There are 32; they use no network, a tiny random GPT-2 and a byte tokenizer, so they finish quickly.
 
 The trained adapter `models/adapter.pt` is committed. The first run downloads distilgpt2 (about 330 MB) from Hugging Face. No API key is needed: the `.env` file and `app/llm.py` chat settings from the starter are not used by the summarizer.
 
